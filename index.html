@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GeoPulse Live Tracker</title>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        #map { height: calc(100vh - 180px); width: 100%; z-index: 1; }
+        .leaflet-touch .leaflet-bar { border: none; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+        .custom-pulse-marker {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .pulse-ring {
+            border: 3px solid #3b82f6;
+            border-radius: 50%;
+            height: 40px;
+            width: 40px;
+            position: absolute;
+            animation: pulsate 1.5s ease-out infinite;
+            opacity: 0;
+        }
+        @keyframes pulsate {
+            0% { transform: scale(0.1); opacity: 0; }
+            50% { opacity: 1; }
+            100% { transform: scale(1.2); opacity: 0; }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans h-screen flex flex-col overflow-hidden">
+
+    <!-- Header Section -->
+    <header class="bg-indigo-600 text-white p-4 shadow-md flex justify-between items-center z-10">
+        <div class="flex items-center space-x-2">
+            <i class="fa-solid fa-location-crosshairs text-2xl text-amber-300"></i>
+            <div>
+                <h1 class="text-lg font-bold leading-tight">GeoPulse Tracker</h1>
+                <p class="text-xs text-indigo-200" id="sub-header-text">सहमति आधारित लाइव लोकेशन ट्रैकर</p>
+            </div>
+        </div>
+        <button id="lang-toggle-btn" onclick="toggleLanguage()" class="bg-indigo-700 hover:bg-indigo-800 text-xs px-3 py-1.5 rounded-full border border-indigo-400 font-semibold transition">
+            English
+        </button>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 flex flex-col relative">
+        <!-- Control Panel Above Map -->
+        <div class="bg-white p-3 shadow-sm border-b border-gray-200 z-10 flex flex-wrap items-center justify-between gap-2">
+            
+            <!-- Mode Switcher -->
+            <div class="flex bg-gray-100 p-1 rounded-lg w-full sm:w-auto">
+                <button id="btn-mode-share" onclick="switchRole('share')" class="flex-1 sm:flex-none px-4 py-1.5 text-xs font-bold rounded-md bg-white text-indigo-600 shadow-sm transition">
+                    <i class="fa-solid fa-satellite-dish mr-1"></i> <span data-i18n="shareLoc">लोकेशन शेयर करें</span>
+                </button>
+                <button id="btn-mode-view" onclick="switchRole('view')" class="flex-1 sm:flex-none px-4 py-1.5 text-xs font-bold rounded-md text-gray-600 transition">
+                    <i class="fa-solid fa-eye mr-1"></i> <span data-i18n="viewLoc">लोकेशन देखें</span>
+                </button>
+            </div>
+
+            <!-- Share Controls -->
+            <div id="panel-share" class="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
+                <div id="session-code-display" class="hidden bg-indigo-50 border border-indigo-200 px-3 py-1 rounded text-xs font-mono font-bold text-indigo-700 flex items-center">
+                    <span data-i18n="code">कोड:</span> <span id="code-val" class="ml-1 text-sm text-indigo-900">------</span>
+                    <button onclick="copyCode()" class="ml-2 text-indigo-500 hover:text-indigo-800" title="Copy Code">
+                        <i class="fa-regular fa-copy"></i>
+                    </button>
+                </div>
+                <button id="toggle-tracking-btn" onclick="toggleTracking()" class="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white font-bold text-xs px-4 py-2 rounded-lg shadow transition">
+                    <i class="fa-solid fa-play mr-1"></i> <span data-i18n="startSharing">लाइव शेयरिंग शुरू करें</span>
+                </button>
+            </div>
+
+            <!-- View Controls -->
+            <div id="panel-view" class="hidden flex items-center gap-2 w-full sm:w-auto">
+                <input type="text" id="input-session-code" placeholder="6-अंकों का कोड दर्ज करें" class="uppercase border border-gray-300 rounded-lg px-3 py-1.5 text-xs font-mono w-full sm:w-44 focus:outline-none focus:border-indigo-500">
+                <button onclick="connectToSession()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-4 py-1.5 rounded-lg shadow whitespace-nowrap transition">
+                    <i class="fa-solid fa-link mr-1"></i> <span data-i18n="join">जुड़ें</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Notification Banner -->
+        <div id="status-banner" class="bg-blue-50 border-b border-blue-200 px-4 py-2 text-xs text-blue-800 flex items-center justify-between z-10">
+            <span id="status-text"><i class="fa-solid fa-circle-info mr-1"></i> <span data-i18n="readyPrompt">ट्रैकिंग शुरू करने के लिए बटन पर क्लिक करें।</span></span>
+            <span id="gps-accuracy" class="font-mono text-blue-600 font-semibold text-[10px]"></span>
+        </div>
+
+        <!-- Interactive Map -->
+        <div id="map"></div>
+
+        <!-- Address Info Card Floating at Bottom -->
+        <div class="absolute bottom-4 left-4 right-4 z-20 pointer-events-none">
+            <div class="bg-white/95 backdrop-blur-md p-3 rounded-xl shadow-lg border border-gray-100 max-w-md mx-auto pointer-events-auto">
+                <div class="flex items-start space-x-3">
+                    <div class="bg-indigo-100 p-2 rounded-lg text-indigo-600 mt-0.5">
+                        <i class="fa-solid fa-location-dot text-lg"></i>
+                    </div>
+                    <div class="flex-1 overflow-hidden">
+                        <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider" data-i18n="currentAddress">वर्तमान स्थान:</h3>
+                        <p id="address-text" class="text-xs font-medium text-gray-800 truncate mt-0.5">स्थान की जानकारी लोड हो रही है...</p>
+                        <div class="flex items-center space-x-4 mt-2 text-[10px] text-gray-500 font-mono">
+                            <span>Lat: <strong id="lat-val" class="text-gray-700">0.0000</strong></span>
+                            <span>Lng: <strong id="lng-val" class="text-gray-700">0.0000</strong></span>
+                            <span>Speed: <strong id="speed-val" class="text-gray-700">0 km/h</strong></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script>
+        // Dictionary for Translations
+        const i18n = {
+            hi: {
+                subHeader: "सहमति आधारित लाइव लोकेशन ट्रैकर",
+                shareLoc: "लोकेशन शेयर करें",
+                viewLoc: "लोकेशन देखें",
+                code: "कोड:",
+                startSharing: "शेयरिंग शुरू करें",
+                stopSharing: "शेयरिंग रोकें",
+                join: "जुड़ें",
+                readyPrompt: "ट्रैकिंग शुरू करने के लिए बटन पर क्लिक करें।",
+                currentAddress: "वर्तमान स्थान:",
+                codePlaceholder: "6-अंकों का कोड दर्ज करें",
+                sharingActive: "आपकी लोकेशन शेयर की जा रही है...",
+                joinedSession: "सफलतापूर्वक कनेक्ट हो गए!",
+                invalidCode: "कृपया 6-अंकों का वैध कोड डालें।",
+                copied: "कोड कॉपी हो गया!",
+                gpsError: "GPS अनुमति अस्वीकृत या उपलब्ध नहीं है।"
+            },
+            en: {
+                subHeader: "Consent-based Live Location Tracker",
+                shareLoc: "Share Location",
+                viewLoc: "View Location",
+                code: "Code:",
+                startSharing: "Start Sharing",
+                stopSharing: "Stop Sharing",
+                join: "Join",
+                readyPrompt: "Click button to start tracking.",
+                currentAddress: "Current Address:",
+                codePlaceholder: "Enter 6-digit code",
+                sharingActive: "Your location is being shared...",
+                joinedSession: "Successfully connected!",
+                invalidCode: "Please enter a valid 6-digit code.",
+                copied: "Code copied to clipboard!",
+                gpsError: "GPS permission denied or unavailable."
+            }
+        };
+
+        let currentLang = 'hi';
+        let map, userMarker, accuracyCircle;
+        let watchId = null;
+        let activeRole = 'share';
+        let sessionCode = null;
+        let broadcastChannel = null;
+
+        // Initialize Map
+        function initMap() {
+            // Default center: India
+            map = L.map('map', { zoomControl: false }).setView([20.5937, 78.9629], 5);
+            
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '© OpenStreetMap'
+            }).addTo(map);
+
+            L.control.zoom({ position: 'bottomright' }).addTo(map);
+        }
+
+        // Toggle Language
+        function toggleLanguage() {
+            currentLang = currentLang === 'hi' ? 'en' : 'hi';
+            document.getElementById('lang-toggle-btn').innerText = currentLang === 'hi' ? 'English' : 'हिंदी';
+            
+            // Translate elements with data-i18n attribute
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if (i18n[currentLang][key]) {
+                    el.innerText = i18n[currentLang][key];
+                }
+            });
+
+            document.getElementById('sub-header-text').innerText = i18n[currentLang].subHeader;
+            document.getElementById('input-session-code').placeholder = i18n[currentLang].codePlaceholder;
+        }
+
+        // Switch Mode (Share vs View)
+        function switchRole(role) {
+            activeRole = role;
+            const shareBtn = document.getElementById('btn-mode-share');
+            const viewBtn = document.getElementById('btn-mode-view');
+            const sharePanel = document.getElementById('panel-share');
+            const viewPanel = document.getElementById('panel-view');
+
+            if (role === 'share') {
+                shareBtn.className = "flex-1 sm:flex-none px-4 py-1.5 text-xs font-bold rounded-md bg-white text-indigo-600 shadow-sm transition";
+                viewBtn.className = "flex-1 sm:flex-none px-4 py-1.5 text-xs font-bold rounded-md text-gray-600 transition";
+                sharePanel.classList.remove('hidden');
+                viewPanel.classList.add('hidden');
+            } else {
+                viewBtn.className = "flex-1 sm:flex-none px-4 py-1.5 text-xs font-bold rounded-md bg-white text-indigo-600 shadow-sm transition";
+                shareBtn.className = "flex-1 sm:flex-none px-4 py-1.5 text-xs font-bold rounded-md text-gray-600 transition";
+                viewPanel.classList.remove('hidden');
+                sharePanel.classList.add('hidden');
+                if (watchId) stopTracking();
+            }
+        }
+
+        // Generate Random 6-Character Session Code
+        function generateCode() {
+            return Math.random().toString(36).substring(2, 8).toUpperCase();
+        }
+
+        // Start / Stop Tracking
+        function toggleTracking() {
+            if (watchId) {
+                stopTracking();
+            } else {
+                startTracking();
+            }
+        }
+
+        function startTracking() {
+            if (!navigator.geolocation) {
+                alert(i18n[currentLang].gpsError);
+                return;
+            }
+
+            sessionCode = generateCode();
+            document.getElementById('code-val').innerText = sessionCode;
+            document.getElementById('session-code-display').classList.remove('hidden');
+            
+            // Setup Cross-tab Broadcast Channel (Simulates Server Sync locally)
+            broadcastChannel = new BroadcastChannel('geopulse_channel_' + sessionCode);
+
+            const btn = document.getElementById('toggle-tracking-btn');
+            btn.className = "w-full sm:w-auto bg-red-600 hover:bg-red-700 text-white font-bold text-xs px-4 py-2 rounded-lg shadow transition";
+            btn.innerHTML = `<i class="fa-solid fa-stop mr-1"></i> <span>${i18n[currentLang].stopSharing}</span>`;
+
+            document.getElementById('status-text').innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-1"></i> ${i18n[currentLang].sharingActive}`;
+
+            watchId = navigator.geolocation.watchPosition(
+                handlePositionUpdate,
+                handlePositionError,
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+            );
+        }
+
+        function stopTracking() {
+            if (watchId) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+            }
+            if (broadcastChannel) {
+                broadcastChannel.close();
+                broadcastChannel = null;
+            }
+
+            document.getElementById('session-code-display').classList.add('hidden');
+            const btn = document.getElementById('toggle-tracking-btn');
+            btn.className = "w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white font-bold text-xs px-4 py-2 rounded-lg shadow transition";
+            btn.innerHTML = `<i class="fa-solid fa-play mr-1"></i> <span>${i18n[currentLang].startSharing}</span>`;
+
+            document.getElementById('status-text').innerText = i18n[currentLang].readyPrompt;
+            document.getElementById('gps-accuracy').innerText = "";
+        }
+
+        // Handle GPS Updates
+        function handlePositionUpdate(position) {
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+            const accuracy = Math.round(position.coords.accuracy);
+            const speed = position.coords.speed ? Math.round(position.coords.speed * 3.6) : 0;
+
+            updateMapLocation(lat, lng, accuracy);
+            updateUI(lat, lng, speed, accuracy);
+
+            // Broadcast data to receivers using the same code
+            if (broadcastChannel) {
+                broadcastChannel.postMessage({ lat, lng, accuracy, speed });
+            }
+
+            // Reverse Geocode to get address
+            fetchAddress(lat, lng);
+        }
+
+        function handlePositionError(err) {
+            document.getElementById('status-text').innerText = "GPS Error: " + err.message;
+        }
+
+        // Update Map Marker & Accuracy Circle
+        function updateMapLocation(lat, lng, accuracy) {
+            const latlng = [lat, lng];
+
+            if (!userMarker) {
+                const customIcon = L.divIcon({
+                    className: 'custom-pulse-marker',
+                    html: `<div class="pulse-ring"></div><i class="fa-solid fa-circle-dot text-indigo-600 text-2xl"></i>`,
+                    iconSize: [40, 40],
+                    iconAnchor: [20, 20]
+                });
+
+                userMarker = L.marker(latlng, { icon: customIcon }).addTo(map);
+                accuracyCircle = L.circle(latlng, { radius: accuracy, color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.15 }).addTo(map);
+                map.setView(latlng, 16);
+            } else {
+                userMarker.setLatLng(latlng);
+                accuracyCircle.setLatLng(latlng);
+                accuracyCircle.setRadius(accuracy);
+                map.panTo(latlng);
+            }
+        }
+
+        // Update UI Text
+        function updateUI(lat, lng, speed, accuracy) {
+            document.getElementById('lat-val').innerText = lat.toFixed(5);
+            document.getElementById('lng-val').innerText = lng.toFixed(5);
+            document.getElementById('speed-val').innerText = speed + " km/h";
+            document.getElementById('gps-accuracy').innerText = `Accurate to ${accuracy}m`;
+        }
+
+        // Fetch Address using Nominatim OpenStreetMap API
+        let lastFetchTime = 0;
+        function fetchAddress(lat, lng) {
+            const now = Date.now();
+            if (now - lastFetchTime < 5000) return; // Rate limit reverse geocoding
+            lastFetchTime = now;
+
+            fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data && data.display_name) {
+                        document.getElementById('address-text').innerText = data.display_name;
+                    }
+                })
+                .catch(() => {
+                    document.getElementById('address-text').innerText = "पता लोड करने में असमर्थ";
+                });
+        }
+
+        // Receiver: Connect to Session
+        function connectToSession() {
+            const codeInput = document.getElementById('input-session-code').value.trim().toUpperCase();
+            if (codeInput.length !== 6) {
+                alert(i18n[currentLang].invalidCode);
+                return;
+            }
+
+            if (broadcastChannel) broadcastChannel.close();
+
+            broadcastChannel = new BroadcastChannel('geopulse_channel_' + codeInput);
+            document.getElementById('status-text').innerHTML = `<i class="fa-solid fa-satellite fa-spin text-indigo-600 mr-1"></i> सिग्नल की प्रतीक्षा की जा रही है... (${codeInput})`;
+
+            broadcastChannel.onmessage = (event) => {
+                const { lat, lng, accuracy, speed } = event.data;
+                document.getElementById('status-text').innerText = i18n[currentLang].joinedSession;
+                updateMapLocation(lat, lng, accuracy);
+                updateUI(lat, lng, speed, accuracy);
+                fetchAddress(lat, lng);
+            };
+        }
+
+        // Copy Code Function
+        function copyCode() {
+            if (!sessionCode) return;
+            navigator.clipboard.writeText(sessionCode).then(() => {
+                alert(i18n[currentLang].copied);
+            });
+        }
+
+        // Initialize Map on Load
+        window.onload = initMap;
+    </script>
+</body>
+</html>
